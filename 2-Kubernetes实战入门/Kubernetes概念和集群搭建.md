@@ -235,7 +235,7 @@ kubeadm init \
 --control-plane-endpoint=cluster-endpoint \
 --image-repository registry.cn-hangzhou.aliyuncs.com/lfy_k8s_images \
 --kubernetes-version v1.20.9 \
---service-cidr=10.96.0.0/16 \
+--service-cidr=10.96.0.0/16 \ #service的网络范围域
 --pod-network-cidr=192.168.0.0/16  # pod网络的范围域
 
 #上列命令中所有网络范围不许重叠
