@@ -267,6 +267,8 @@ kubectl rollout undo deployment/my-dep --to-revision=2
 
 
 
+## 6、更多工作负载
+
 > 更多工作负载：
 >
 > 除了Deployment，k8s还有 `StatefulSet` 、`DaemonSet` 、`Job`  等 类型资源。我们都称为 `工作负载`。
@@ -438,6 +440,7 @@ kubectl get pod,svc -n ingress-nginx
 >
 > ingress网关就是由nginx实现的
 >
+> 下面只挑选其中的 **路径重写** 和 **流量限制** 进行讲解，其他请参考官方文档
 
 
 
@@ -603,7 +606,17 @@ spec:
               number: 8000
 ```
 
+> 变化的部分：
+>
+> - 添加了annotations: nginx.ingress.kubernetes.io/rewrite-target: /$2
+> - 修改了path: "/nginx(/|$)(.*)"
+>
+> 作用是，将 `/nginx/*`  重写为 `/*`
+
+
+
 ### 3、流量限制
+
 ```yaml
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -628,11 +641,26 @@ spec:
 
 
 
+### 4、更多高级用法
 
+> 官方文档：[https://kubernetes.github.io/ingress-nginx/](https://kubernetes.github.io/ingress-nginx/)
+>
+> 下面只挑选其中的 **路径重写** 和 **流量限制** 进行讲解，其他请参考官方文档
 
 
 
 # 7、存储抽象
+
+> 如果一个pod挂掉后，k8s将其重启到另一台机器，那么其之前产生的文件就丢失了
+>
+> 那么就需要**统一管理存储**
+>
+> 存储层的实现有很多可选项，k8s支持多种存储层实现：
+>
+> - NFS （这里我们选这个）
+> - Glusterfs
+> - CephFS
+
 ## 环境准备
 ### 1、所有节点
 ```bash
@@ -654,12 +682,12 @@ exportfs -r
 
 ### 3、从节点
 ```bash
-showmount -e 172.31.0.4
+showmount -e <master_ip>
 
 #执行以下命令挂载 nfs 服务器上的共享目录到本机路径 /root/nfsmount
 mkdir -p /nfs/data
 
-mount -t nfs 172.31.0.4:/nfs/data /nfs/data
+mount -t nfs <master_ip>:/nfs/data /nfs/data
 # 写入一个测试文件
 echo "hello nfs server" > /nfs/data/test.txt
 ```
@@ -667,6 +695,9 @@ echo "hello nfs server" > /nfs/data/test.txt
 
 
 ### 4、原生方式数据挂载
+
+> 将某次部署的数据挂在到存储层，使该部署中各个pod的指定目录使用相同的存储
+
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
@@ -687,21 +718,31 @@ spec:
       containers:
       - image: nginx
         name: nginx
-        volumeMounts:
-        - name: html
-          mountPath: /usr/share/nginx/html
+      	volumeMounts:
+        - name: html # 一个名字无关紧要
+          mountPath: /usr/share/nginx/html # 需要挂在到存储层的目录
       volumes:
-        - name: html
+        - name: html # 上面的名字对应
           nfs:
-            server: 172.31.0.4
-            path: /nfs/data/nginx-pv
+            server: <master_ip>
+            path: /nfs/data/nginx-pv # 挂载目录
 ```
 
+
+
 ## 1、PV&PVC
+
 > _PV：持久卷（Persistent Volume），将应用需要持久化的数据保存到指定位置_
 >
 > _PVC：持久卷申明（__Persistent Volume Claim__），申明需要使用的持久卷规格_
 >
+> PV 是提前创建好的，然后pod去使用PVC去申请需要多大的空间，然后拿着PVC去PV里分配存储
+
+> 分为**静态供应**和**动态供应**两种，下面讲解静态供应的方式
+>
+> 静态供应：提前手动创建好PV池
+>
+> 动态供应：使用PVC申请时自动创建相应大小的PV
 
 ### 1、创建pv池
 > 静态供应
@@ -730,7 +771,7 @@ spec:
   storageClassName: nfs
   nfs:
     path: /nfs/data/01
-    server: 172.31.0.4
+    server: <master_ip>
 ---
 apiVersion: v1
 kind: PersistentVolume
@@ -744,7 +785,7 @@ spec:
   storageClassName: nfs
   nfs:
     path: /nfs/data/02
-    server: 172.31.0.4
+    server: <master_ip>
 ---
 apiVersion: v1
 kind: PersistentVolume
@@ -758,12 +799,18 @@ spec:
   storageClassName: nfs
   nfs:
     path: /nfs/data/03
-    server: 172.31.0.4
+    server: <master_ip>
+```
+
+```sh
+kubectl apply -f pv.yaml
+
+kubectl get pv
 ```
 
 
 
-__
+
 
 ### 2、PVC创建与绑定
 > 创建PVC
@@ -782,6 +829,20 @@ spec:
       storage: 200Mi
   storageClassName: nfs
 ```
+
+```sh
+kubectl apply -f pvc.yaml
+
+# 查看pv发现其中一个pv的status变为bound（一个PV只能绑定一个PVC，多余空间浪费）
+kubectl get pv
+
+kubectl delete -f pvc.yaml
+
+# 再查看pv发现其中另一个pv的status变为bound，之前那个pv的status变为released（还不能使用）
+kubectl get pv
+```
+
+
 
 
 
@@ -814,7 +875,7 @@ spec:
       volumes:
         - name: html
           persistentVolumeClaim:
-            claimName: nginx-pvc
+            claimName: nginx-pvc # PVC名字
 ```
 
 
@@ -822,30 +883,32 @@ spec:
 ## 2、ConfigMap
 > 抽取应用配置，并且可以自动更新
 >
+> 就像使用Docker时，我们喜欢将容器的配置文件进行Volume挂载，这里就对应到k8s中，我们用ConfigMap挂载pod的配置文件
 
 ### 1、redis示例
 #### 1、把之前的配置文件创建为配置集
 ```bash
 # 创建配置，redis保存到k8s的etcd；
-kubectl create cm redis-conf --from-file=redis.conf
+kubectl create cm redis-conf --from-file=./redis.conf
 ```
 
-
-
-```yaml
+```sh
+> kubectl get cm redis-conf -oyaml
 apiVersion: v1
 data:    #data是所有真正的数据，key：默认是文件名   value：配置文件的内容
-  redis.conf: |
+  redis.conf: | # key
     appendonly yes
 kind: ConfigMap
 metadata:
+  ...
   name: redis-conf
   namespace: default
+  ...
 ```
 
 
 
-#### 2、创建Pod
+#### 2、创建Pod并绑定cm配置
 ```yaml
 apiVersion: v1
 kind: Pod
@@ -868,17 +931,18 @@ spec:
   volumes:
     - name: data
       emptyDir: {}
-    - name: config
+    - name: config # 和上面引用的name一致
       configMap:
-        name: redis-conf
+        name: redis-conf # 去找叫redis-conf的cm
         items:
-        - key: redis.conf
-          path: redis.conf
+        - key: redis.conf # 对应cm配置yaml输出中的key
+          path: redis.conf # 存到挂载目录的redis.conf这个文件
 ```
 
 
 
-#### 
+
+
 #### 3、检查默认配置
 ```bash
 kubectl exec -it redis -- redis-cli
@@ -886,8 +950,6 @@ kubectl exec -it redis -- redis-cli
 127.0.0.1:6379> CONFIG GET appendonly
 127.0.0.1:6379> CONFIG GET requirepass
 ```
-
-
 
 
 
@@ -903,7 +965,10 @@ data:
     maxmemory-policy allkeys-lru 
 ```
 
+
+
 #### 5、检查配置是否更新
+
 ```bash
 kubectl exec -it redis -- redis-cli
 
@@ -923,13 +988,10 @@ kubectl exec -it redis -- redis-cli
 > _**<font style="color:#222222;">原因：我们的Pod部署的中间件自己本身没有热更新能力</font>**_
 >
 
-__
-
 
 
 ## 3、Secret
 > <font style="color:rgb(34, 34, 34);">Secret</font><font style="color:rgb(34, 34, 34);"> 对象类型用来保存敏感信息，例如密码、OAuth 令牌和 SSH 密钥。 将这些信息放在 </font><font style="color:rgb(34, 34, 34);">secret</font><font style="color:rgb(34, 34, 34);"> 中比放在 </font>[Pod](https://kubernetes.io/docs/concepts/workloads/pods/pod-overview/)<font style="color:rgb(34, 34, 34);"> 的定义或者 </font>[容器镜像](https://kubernetes.io/zh/docs/reference/glossary/?all=true#term-image)<font style="color:rgb(34, 34, 34);"> 中来说更加安全和灵活。</font>
->
 
 ```bash
 kubectl create secret docker-registry leifengyang-docker \
@@ -955,6 +1017,6 @@ spec:
   - name: private-nginx
     image: leifengyang/guignginx:v1.0
   imagePullSecrets:
-  - name: leifengyang-docker
+  - name: leifengyang-docker # 使用这个名字的secret
 ```
 
