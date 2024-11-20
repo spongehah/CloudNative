@@ -941,8 +941,6 @@ spec:
 
 
 
-
-
 #### 3、检查默认配置
 ```bash
 kubectl exec -it redis -- redis-cli
@@ -983,15 +981,17 @@ kubectl exec -it redis -- redis-cli
 
 
 
-> _**<font style="color:#222222;">配置值未更改，因为需要重新启动 Pod 才能从关联的 ConfigMap 中获取更新的值。 </font>**_
+> 配置值未更改，因为需要**重新启动 Pod** 才能从关联的 ConfigMap 中获取更新的值。 
 >
-> _**<font style="color:#222222;">原因：我们的Pod部署的中间件自己本身没有热更新能力</font>**_
+> 原因：我们的Pod部署的中间件自己本身没有热更新能力
 >
 
 
 
 ## 3、Secret
 > <font style="color:rgb(34, 34, 34);">Secret</font><font style="color:rgb(34, 34, 34);"> 对象类型用来保存敏感信息，例如密码、OAuth 令牌和 SSH 密钥。 将这些信息放在 </font><font style="color:rgb(34, 34, 34);">secret</font><font style="color:rgb(34, 34, 34);"> 中比放在 </font>[Pod](https://kubernetes.io/docs/concepts/workloads/pods/pod-overview/)<font style="color:rgb(34, 34, 34);"> 的定义或者 </font>[容器镜像](https://kubernetes.io/zh/docs/reference/glossary/?all=true#term-image)<font style="color:rgb(34, 34, 34);"> 中来说更加安全和灵活。</font>
+
+eg：拉去私有的镜像，需要输入dockerhub账号密码，可以配置为一个secret
 
 ```bash
 kubectl create secret docker-registry leifengyang-docker \
